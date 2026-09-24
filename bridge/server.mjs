@@ -493,10 +493,13 @@ function elevenKey() {
  * or when there is no local recogniser at all.
  */
 function sttEngine() {
-  const key = elevenKey()
-  if (key && process.env.JARVIS_STT_ENGINE === 'elevenlabs') return 'elevenlabs'
-  if (localSttAvailable()) return 'local'
-  return key ? 'elevenlabs' : null
+  // Never a silent fallback to Scribe. It used to take over whenever the
+  // local recogniser failed to load and a key happened to be present — and a
+  // key made for text-to-speech usually lacks the speech-to-text permission,
+  // so every utterance came back 401 and JARVIS went deaf with a key that was
+  // working perfectly for his voice. Scribe is opt-in, full stop.
+  if (process.env.JARVIS_STT_ENGINE === 'elevenlabs' && elevenKey()) return 'elevenlabs'
+  return localSttAvailable() ? 'local' : null
 }
 
 /**
@@ -935,14 +938,22 @@ const handleRequest = async (req, res) => {
   // speaking at all is done locally with voice-activity detection, which never
   // touches this endpoint; this is only for the words.
   if (req.method === 'POST' && req.url === '/stt') {
-    const engine = sttEngine()
+    const type = req.headers['content-type'] || 'audio/webm'
+    // WAV is what the browser sends for the local recogniser, so WAV always
+    // goes there, whatever else is configured. No key is involved.
+    const engine = type.includes('wav') && localSttAvailable() ? 'local' : sttEngine()
     if (!engine) {
-      res.writeHead(503, cors)
-      return res.end('no speech recogniser: no elevenlabs key and no local model')
+      res.writeHead(503, { ...cors, 'content-type': 'application/json' })
+      return res.end(
+        JSON.stringify({
+          error:
+            'Yerel konuşma tanıma yüklenemedi — JARVIS klasöründe "npm install" çalıştırıp ' +
+            'yeniden başlatın. Ayrıntı bridge terminalinde.',
+        }),
+      )
     }
     const key = engine === 'elevenlabs' ? elevenKey() : null
 
-    const type = req.headers['content-type'] || 'audio/webm'
     const chunks = []
     let size = 0
     let overflowed = false

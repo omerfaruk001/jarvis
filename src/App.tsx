@@ -65,7 +65,7 @@ const newId = () =>
  *  that woke him as "travis" gets that word sent on to the model as a question. */
 // Keep in step with WAKE in lib/voice.ts, Turkish transcriptions included.
 const NAME =
-  '(?:jarvis|jarvys|jervis|travis|jarviss|java\'s|jarv|jarviz|carvis|carviz|cervis|cerviz|çarvis|çervis|carbis|jarbis)'
+  '(?:jarvis|jarvys|jervis|travis|jarviss|java\'s|jarv|jarviz|carvis|carviz|cervis|cerviz|çarvis|çervis|carbis|jarbis|javis|jarvıs|cervıs|carvıs)'
 /** A bare vocative — "Jarvis", "hey jarvis" — with nothing asked. */
 const BARE_NAME = new RegExp(`^(?:hey|hej|he|hi|ok|okay|yo|hay|hei)?[\\s,]*${NAME}[\\s,.!?]*$`, 'iu')
 /** A leading vocative on a real command: "Jarvis, what's the weather". */

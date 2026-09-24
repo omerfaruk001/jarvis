@@ -57,7 +57,12 @@ let sherpa = null
 try {
   sherpa = require('sherpa-onnx-node')
 } catch (err) {
-  console.warn(`[jarvis] yerel konuşma tanıma yüklenemedi: ${err?.message ?? err}`)
+  console.error(
+    `[jarvis] yerel konuşma tanıma yüklenemedi: ${err?.message ?? err}\n` +
+      '[jarvis] Çözüm: JARVIS klasöründe "npm install" çalıştırın (sherpa-onnx-node ve ' +
+      'Windows için sherpa-onnx-win-x64 kurulmalı). Windows\'ta hata sürerse ' +
+      '"Microsoft Visual C++ Redistributable (x64)" kurun.',
+  )
 }
 
 /** Whether this machine can transcribe locally at all (the native addon

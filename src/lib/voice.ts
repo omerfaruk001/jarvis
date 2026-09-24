@@ -83,7 +83,7 @@ const WAKE_DEBOUNCE = 1500
  * indication why. Better a rare false wake than a name that does not answer.
  */
 const WAKE =
-  /(?<![\p{L}\p{N}])(?:(?:hey|hej|he|hi|ok|okay|yo|hay|hei)[\s,]*)?(?:jarvis|jarvys|jervis|travis|jarviss|java's|jarv|jarviz|carvis|carviz|cervis|cerviz|çarvis|çervis|carbis|jarbis)(?![\p{L}\p{N}])(?!'s(?![\p{L}]))/iu
+  /(?<![\p{L}\p{N}])(?:(?:hey|hej|he|hi|ok|okay|yo|hay|hei)[\s,]*)?(?:jarvis|jarvys|jervis|travis|jarviss|java's|jarv|jarviz|carvis|carviz|cervis|cerviz|çarvis|çervis|carbis|jarbis|javis|jarvıs|cervıs|carvıs)(?![\p{L}\p{N}])(?!'s(?![\p{L}]))/iu
 
 /** Everything after the wake phrase, which is usually the actual command. */
 function afterWake(text: string): string {
@@ -499,8 +499,9 @@ async function startElevenVoice(h: VoiceHandlers): Promise<Voice> {
     if (mode === 'deaf') return
     const t0 = performance.now()
     try {
-      // The local transcriber can't decode Opus, so hand it PCM it can read.
-      const body = caps().sttEngine === 'local' ? await toWav16k(blob) : blob
+      // WAV unless Scribe was explicitly chosen: the bridge routes WAV to local
+      // Whisper, which needs no key, and it cannot decode Opus itself.
+      const body = caps().sttEngine === 'elevenlabs' ? blob : await toWav16k(blob)
       const res = await fetch(`${BRIDGE_HTTP_URL}/stt`, {
         method: 'POST',
         headers: { 'content-type': body.type || 'audio/webm' },
