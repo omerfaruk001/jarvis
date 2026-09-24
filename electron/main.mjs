@@ -24,6 +24,7 @@ import { existsSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { serveBuild } from './static.mjs'
+import { PLAIN_OUTPUT_ENV, pipeTagged } from './output.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -53,6 +54,7 @@ function startBridge(origins) {
   const bridgePath = join(APP_ROOT, 'bridge', 'server.mjs')
   const env = {
     ...process.env,
+    ...PLAIN_OUTPUT_ENV,
     JARVIS_ALLOW_WRITES: '1',
     JARVIS_ALLOWED_ORIGINS: origins,
   }
@@ -117,8 +119,8 @@ function startBridge(origins) {
   function wire(c) {
     child = c
     bridge = c
-    c.stdout?.on('data', (d) => process.stdout.write(`\x1b[36m[bridge]\x1b[0m ${d}`))
-    c.stderr?.on('data', (d) => process.stderr.write(`\x1b[36m[bridge]\x1b[0m ${d}`))
+    pipeTagged(c.stdout, process.stdout, '[bridge]')
+    pipeTagged(c.stderr, process.stderr, '[bridge]')
     c.on('exit', (code) => {
       console.log(`[jarvis] bridge exited (${code}).`)
     })

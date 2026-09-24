@@ -63,11 +63,16 @@ const newId = () =>
 
 /** The same mishearings voice.ts accepts for the wake word — otherwise a turn
  *  that woke him as "travis" gets that word sent on to the model as a question. */
-const NAME = '(?:jarvis|jarvys|jervis|travis|jarviss|java\'s|jarv)'
+// Keep in step with WAKE in lib/voice.ts, Turkish transcriptions included.
+const NAME =
+  '(?:jarvis|jarvys|jervis|travis|jarviss|java\'s|jarv|jarviz|carvis|carviz|cervis|cerviz|çarvis|çervis|carbis|jarbis)'
 /** A bare vocative — "Jarvis", "hey jarvis" — with nothing asked. */
-const BARE_NAME = new RegExp(`^(?:hey|hi|ok|okay|yo)?\\s*${NAME}[\\s,.!?]*$`, 'i')
+const BARE_NAME = new RegExp(`^(?:hey|hej|he|hi|ok|okay|yo|hay|hei)?[\\s,]*${NAME}[\\s,.!?]*$`, 'iu')
 /** A leading vocative on a real command: "Jarvis, what's the weather". */
-const LEADING_NAME = new RegExp(`^(?:hey|hi|ok|okay|yo)?\\s*${NAME}\\b[\\s,.:!?-]*`, 'i')
+const LEADING_NAME = new RegExp(
+  `^(?:hey|hej|he|hi|ok|okay|yo|hay|hei)?[\\s,]*${NAME}(?![\\p{L}\\p{N}])[\\s,.:!?-]*`,
+  'iu',
+)
 
 export default function App() {
   const store = useStore
@@ -596,7 +601,7 @@ export default function App() {
         silence()
         const demo = createSpeaker()
         speaker.current = demo
-        demo.say(`Voice set to ${name.replace(/\(.*?\)/g, '').trim()}. At your service, sir.`)
+        demo.say(`Ses ${name.replace(/\(.*?\)/g, '').trim()} olarak ayarlandı. Emrinizdeyim.`)
         void demo.end()
         return
       }

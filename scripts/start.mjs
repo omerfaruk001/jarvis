@@ -13,6 +13,7 @@
 import { spawn } from 'node:child_process'
 import process from 'node:process'
 import { cpSync, existsSync, mkdirSync } from 'node:fs'
+import { PLAIN_OUTPUT_ENV, pipeTagged } from '../electron/output.mjs'
 
 /**
  * Put MediaPipe's WebAssembly where the page can actually load it.
@@ -46,29 +47,25 @@ function vendorWasm() {
 
 const writes = process.argv.includes('--writes')
 
-// A dim label per process, so the interleaved logs stay readable.
-const paint = (tag, colour) => (line) =>
-  line
-    .toString()
-    .split('\n')
-    .filter((l) => l.length)
-    .map((l) => `\x1b[${colour}m${tag}\x1b[0m ${l}`)
-    .join('\n')
-
 const children = []
 
-function run(name, command, args, colour, env) {
-  const label = paint(name, colour)
+/**
+ * A plain [name] tag per process, so the interleaved logs stay readable. No
+ * colour: escape codes show up as literal `[36m` junk in consoles that don't
+ * interpret them (Windows PowerShell under conhost), so children are asked
+ * for plain output and whatever escapes remain are stripped — see output.mjs.
+ */
+function run(name, command, args, env) {
   const child = spawn(command, args, {
-    env: { ...process.env, ...env },
+    env: { ...process.env, ...PLAIN_OUTPUT_ENV, ...env },
     shell: false,
   })
-  child.stdout.on('data', (d) => process.stdout.write(label(d) + '\n'))
-  child.stderr.on('data', (d) => process.stderr.write(label(d) + '\n'))
+  pipeTagged(child.stdout, process.stdout, `[${name}]`)
+  pipeTagged(child.stderr, process.stderr, `[${name}]`)
   child.on('exit', (code) => {
     // If either half dies the other is useless, so take the whole thing down
     // rather than leave a half-running app that looks alive but cannot answer.
-    console.log(`\x1b[${colour}m${name}\x1b[0m exited (${code}); stopping the rest.`)
+    console.log(`[${name}] exited (${code}); stopping the rest.`)
     shutdown(code ?? 0)
   })
   children.push(child)
@@ -114,10 +111,10 @@ if (port) {
 vendorWasm()
 
 console.log('\nJ.A.R.V.I.S. starting — the brain and the face.\n')
-run('bridge', 'node', ['bridge/server.mjs'], '36', bridgeEnv)
+run('bridge', 'node', ['bridge/server.mjs'], bridgeEnv)
 // npm is a shell script on most systems; call the vite binary directly so we do
 // not need shell:true (which would break the argument handling above).
-run('face', process.execPath, ['node_modules/vite/bin/vite.js'], '35', {})
+run('face', process.execPath, ['node_modules/vite/bin/vite.js'], {})
 
 console.log(
   '\nWhen it says the dev server is ready, open the URL it prints in Chrome,\n' +

@@ -71,6 +71,11 @@ const WAKE_DEBOUNCE = 1500
  * correct, and during an answer "Jarvis" on its own is the natural way to cut
  * in. The negative lookahead keeps possessives ("Jarvis's job") from waking him.
  *
+ * The Turkish spellings are the same name through a Turkish transcriber:
+ * with Whisper set to Turkish, "Jarvis" as people actually say it (/dʒ/) comes
+ * back as Carvis or Cervis about as often as Jarvis. The boundaries are
+ * Unicode-aware because `\b` treats ç and ı as non-letters.
+ *
  * The alternates are not padding. "Jarvis" is not in a general dictation
  * model's high-frequency vocabulary, and Chrome routinely returns Travis,
  * Jervis, Jarvys or Java's for a perfectly clear utterance — every one of which
@@ -78,7 +83,7 @@ const WAKE_DEBOUNCE = 1500
  * indication why. Better a rare false wake than a name that does not answer.
  */
 const WAKE =
-  /\b(?:hey|hi|ok|okay|yo)?\s*(?:jarvis|jarvys|jervis|jarvis's|travis|jarviss|java's|jarv)\b(?!'s)/i
+  /(?<![\p{L}\p{N}])(?:(?:hey|hej|he|hi|ok|okay|yo|hay|hei)[\s,]*)?(?:jarvis|jarvys|jervis|travis|jarviss|java's|jarv|jarviz|carvis|carviz|cervis|cerviz|çarvis|çervis|carbis|jarbis)(?![\p{L}\p{N}])(?!'s(?![\p{L}]))/iu
 
 /** Everything after the wake phrase, which is usually the actual command. */
 function afterWake(text: string): string {
@@ -332,7 +337,8 @@ function isEcho(heard: string, spoken: string): boolean {
  * apart in one glance.
  */
 export const diag = {
-  /** Which input engine is running: 'elevenlabs' (VAD+Scribe) or 'browser'. */
+  /** Which input engine is running: 'elevenlabs' (VAD+Scribe), 'whisper'
+   *  (VAD+local Whisper in the bridge) or 'browser'. */
   engine: 'browser',
   /** Whether the microphone pipeline is live. */
   running: false,
@@ -398,11 +404,54 @@ export async function startVoice(h: VoiceHandlers): Promise<Voice> {
     )
     return { stop: () => {}, live: () => false }
   }
-  diag.engine = caps().stt ? 'elevenlabs' : 'browser'
+  diag.engine = caps().stt ? (caps().sttEngine === 'local' ? 'whisper' : 'elevenlabs') : 'browser'
   return caps().stt ? startElevenVoice(h) : startBrowserVoice(h)
 }
 
-/** VAD + ElevenLabs Scribe. */
+/**
+ * Decode a recorded segment and re-encode it as 16 kHz mono 16-bit WAV, the
+ * format Whisper wants. The browser already has an Opus decoder; the bridge
+ * does not, so the conversion happens here, and resampling to 16 kHz first
+ * makes the upload a third the size of 48 kHz PCM.
+ */
+async function toWav16k(blob: Blob): Promise<Blob> {
+  const RATE = 16000
+  const encoded = await blob.arrayBuffer()
+  const ctx = new OfflineAudioContext(1, 1, RATE)
+  const decoded = await ctx.decodeAudioData(encoded)
+  const frames = Math.max(1, Math.ceil(decoded.duration * RATE))
+  const render = new OfflineAudioContext(1, frames, RATE)
+  const src = render.createBufferSource()
+  src.buffer = decoded
+  src.connect(render.destination)
+  src.start()
+  const pcm = (await render.startRendering()).getChannelData(0)
+
+  const out = new DataView(new ArrayBuffer(44 + pcm.length * 2))
+  const tag = (at: number, s: string) => {
+    for (let i = 0; i < s.length; i++) out.setUint8(at + i, s.charCodeAt(i))
+  }
+  tag(0, 'RIFF')
+  out.setUint32(4, 36 + pcm.length * 2, true)
+  tag(8, 'WAVE')
+  tag(12, 'fmt ')
+  out.setUint32(16, 16, true)
+  out.setUint16(20, 1, true) // PCM
+  out.setUint16(22, 1, true) // mono
+  out.setUint32(24, RATE, true)
+  out.setUint32(28, RATE * 2, true)
+  out.setUint16(32, 2, true)
+  out.setUint16(34, 16, true)
+  tag(36, 'data')
+  out.setUint32(40, pcm.length * 2, true)
+  for (let i = 0; i < pcm.length; i++) {
+    const v = Math.max(-1, Math.min(1, pcm[i]))
+    out.setInt16(44 + i * 2, v < 0 ? v * 0x8000 : v * 0x7fff, true)
+  }
+  return new Blob([out.buffer], { type: 'audio/wav' })
+}
+
+/** VAD + a real transcriber: ElevenLabs Scribe, or Whisper in the bridge. */
 async function startElevenVoice(h: VoiceHandlers): Promise<Voice> {
   let lastWake = 0
   let vad: Vad | null = null
@@ -450,10 +499,12 @@ async function startElevenVoice(h: VoiceHandlers): Promise<Voice> {
     if (mode === 'deaf') return
     const t0 = performance.now()
     try {
+      // The local transcriber can't decode Opus, so hand it PCM it can read.
+      const body = caps().sttEngine === 'local' ? await toWav16k(blob) : blob
       const res = await fetch(`${BRIDGE_HTTP_URL}/stt`, {
         method: 'POST',
-        headers: { 'content-type': blob.type || 'audio/webm' },
-        body: blob,
+        headers: { 'content-type': body.type || 'audio/webm' },
+        body,
       })
       diag.idleMs = Math.round(performance.now() - t0)
       if (!res.ok) {
@@ -616,6 +667,7 @@ function startBrowserVoice(h: VoiceHandlers): Voice {
   let barged = false
   let lastWake = 0
   let lastAlive = Date.now()
+  let networkFailures = 0
   let silenceTimer: ReturnType<typeof setTimeout> | null = null
 
   /** Same assembly rules as the premium path — a pause is not a full stop. */
@@ -685,6 +737,7 @@ function startBrowserVoice(h: VoiceHandlers): Voice {
 
   const onResult = (e: any) => {
     touch()
+    networkFailures = 0
     const mode = h.mode()
     diag.mode = mode
     if (mode === 'deaf') {
@@ -774,6 +827,14 @@ function startBrowserVoice(h: VoiceHandlers): Voice {
         stopped = true
         diag.running = false
         h.onError('Microphone access was refused — voice input is unavailable.')
+      } else if (ev.error === 'network' && ++networkFailures === 3) {
+        // The recogniser's audio goes to a Google service. Inside Electron
+        // that service is never reachable (no API key is built in), so this
+        // fails for ever while the level meter still moves. Say so, once,
+        // instead of restarting silently every 80ms and looking deaf.
+        h.onError(
+          'Speech recognition service unreachable — start the bridge so it can transcribe locally.',
+        )
       }
     }
     rec.onend = () => {

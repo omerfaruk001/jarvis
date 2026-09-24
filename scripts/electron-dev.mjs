@@ -13,6 +13,7 @@
 import { spawn } from 'node:child_process'
 import process from 'node:process'
 import { cpSync, existsSync, mkdirSync } from 'node:fs'
+import { PLAIN_OUTPUT_ENV, pipeTagged } from '../electron/output.mjs'
 
 const PORT = 5173
 
@@ -78,8 +79,12 @@ console.log('\nJ.A.R.V.I.S. desktop (dev) — starting the face on Vite.\n')
 const vite = spawn(
   process.execPath,
   ['node_modules/vite/bin/vite.js', '--port', String(PORT), '--strictPort'],
-  { env: { ...process.env, PORT: String(PORT) }, stdio: 'inherit' },
+  // Piped rather than inherited so escape codes can be stripped on the way
+  // through — PowerShell under conhost prints them as literal junk.
+  { env: { ...process.env, ...PLAIN_OUTPUT_ENV, PORT: String(PORT) } },
 )
+pipeTagged(vite.stdout, process.stdout, '[face]')
+pipeTagged(vite.stderr, process.stderr, '[face]')
 children.push(vite)
 vite.on('exit', (code) => shutdown(code ?? 0))
 
@@ -98,8 +103,9 @@ console.log(`\n  Vite is up; launching Electron against ${url}.\n`)
 const { default: electronPath } = await import('electron')
 
 const electron = spawn(electronPath, ['.'], {
-  env: { ...process.env, ELECTRON_START_URL: url },
-  stdio: 'inherit',
+  env: { ...process.env, ...PLAIN_OUTPUT_ENV, ELECTRON_START_URL: url },
 })
+pipeTagged(electron.stdout, process.stdout, '[app]')
+pipeTagged(electron.stderr, process.stderr, '[app]')
 children.push(electron)
 electron.on('exit', (code) => shutdown(code ?? 0))

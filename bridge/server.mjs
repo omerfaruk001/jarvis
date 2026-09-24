@@ -27,6 +27,7 @@ import { readFile, realpath, stat } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve as resolvePath } from 'node:path'
 import { openRemote, proxyError, vetTarget, PROXY_UA } from './net.mjs'
 import { probeUrl, renderPage } from './page.mjs'
+import { localSttAvailable, parseWav, transcribeLocal, warmLocalStt } from './stt.mjs'
 
 const PORT = Number(process.env.JARVIS_BRIDGE_PORT ?? 8787)
 
@@ -693,9 +694,21 @@ const handleRequest = async (req, res) => {
     // with a key the app transcribes with Scribe and speaks with ElevenLabs;
     // without one it falls back to the browser's own recogniser and voice, so a
     // student with nothing configured still has a working assistant.
+    //
+    // Without a key, words are transcribed locally by Whisper (see stt.mjs)
+    // rather than by the browser's recogniser, which cannot work inside
+    // Electron at all. `sttEngine` tells the browser which format to post.
     const eleven = Boolean(elevenKey())
+    const local = !eleven && localSttAvailable()
     res.writeHead(200, { ...cors, 'content-type': 'application/json' })
-    return res.end(JSON.stringify({ ok: true, tts: eleven, stt: eleven }))
+    return res.end(
+      JSON.stringify({
+        ok: true,
+        tts: eleven,
+        stt: eleven || local,
+        sttEngine: eleven ? 'elevenlabs' : local ? 'local' : null,
+      }),
+    )
   }
 
   // Serve local image files to the page. Screenshots and generated art land on
@@ -904,9 +917,9 @@ const handleRequest = async (req, res) => {
   // touches this endpoint; this is only for the words.
   if (req.method === 'POST' && req.url === '/stt') {
     const key = elevenKey()
-    if (!key) {
+    if (!key && !localSttAvailable()) {
       res.writeHead(503, cors)
-      return res.end('no elevenlabs key')
+      return res.end('no speech recogniser: no elevenlabs key and no local model')
     }
 
     const type = req.headers['content-type'] || 'audio/webm'
@@ -933,6 +946,21 @@ const handleRequest = async (req, res) => {
     if (size < 1200) {
       res.writeHead(200, { ...cors, 'content-type': 'application/json' })
       return res.end(JSON.stringify({ text: '' }))
+    }
+
+    // No key: Whisper, locally. The browser has already decoded the segment to
+    // 16 kHz mono WAV, because nothing on this side can decode Opus.
+    if (!key) {
+      try {
+        const { samples, sampleRate } = parseWav(Buffer.concat(chunks))
+        const text = await transcribeLocal(samples, sampleRate)
+        res.writeHead(200, { ...cors, 'content-type': 'application/json' })
+        return res.end(JSON.stringify({ text }))
+      } catch (err) {
+        console.error('[jarvis] local transcription failed:', err?.message ?? err)
+        res.writeHead(500, cors)
+        return res.end(String(err?.message ?? err))
+      }
     }
 
     try {
@@ -1016,6 +1044,14 @@ console.log(
   `[jarvis] speech ${elevenKey() ? 'via ElevenLabs (key from MCP config)' : 'using browser fallback voice'}`,
 )
 console.log(`[jarvis] model ${MODEL} · effort ${EFFORT}`)
+if (!elevenKey()) {
+  console.log(
+    localSttAvailable()
+      ? '[jarvis] hearing via local Whisper (no ElevenLabs key)'
+      : '[jarvis] no speech recogniser available — install dependencies (sherpa-onnx-node)',
+  )
+  warmLocalStt()
+}
 console.log(
   `[jarvis] writes ${ALLOW_WRITES ? 'ENABLED' : 'disabled'}` +
     (ALLOW_WRITES ? '' : ' — set JARVIS_ALLOW_WRITES=1 to permit shell/file/device actions'),

@@ -22,6 +22,9 @@ export type Capabilities = {
   stt: boolean
   /** ElevenLabs text-to-speech is reachable via the bridge. */
   tts: boolean
+  /** Who transcribes when `stt` is true: ElevenLabs Scribe, or Whisper running
+   *  locally inside the bridge (which wants WAV rather than Opus). */
+  sttEngine?: 'elevenlabs' | 'local' | null
 }
 
 /** Browser-only until the probe says otherwise. Safe default: the app works. */
@@ -56,8 +59,17 @@ export async function probeCapabilities(): Promise<Capabilities> {
       signal: AbortSignal.timeout(3000),
     })
     if (res.ok) {
-      const h = (await res.json()) as { stt?: boolean; tts?: boolean }
-      current = { stt: Boolean(h.stt), tts: Boolean(h.tts) }
+      const h = (await res.json()) as {
+        stt?: boolean
+        tts?: boolean
+        sttEngine?: 'elevenlabs' | 'local' | null
+      }
+      current = {
+        stt: Boolean(h.stt),
+        tts: Boolean(h.tts),
+        // A bridge from before sttEngine existed only ever meant ElevenLabs.
+        sttEngine: h.sttEngine ?? (h.stt ? 'elevenlabs' : null),
+      }
     }
   } catch {
     // Bridge down or slow — stay on the browser engines rather than blocking
@@ -71,6 +83,7 @@ export async function probeCapabilities(): Promise<Capabilities> {
 export function engineLabel(): string {
   const c = current
   if (c.stt && c.tts) return 'ElevenLabs'
+  if (c.sttEngine === 'local') return 'local Whisper'
   if (c.tts) return 'ElevenLabs voice'
   // env.elevenKey is only meaningful in direct mode; harmless to mention.
   if (env.elevenKey && BACKEND !== 'bridge') return 'ElevenLabs (direct)'

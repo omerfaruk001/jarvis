@@ -165,46 +165,51 @@ const MAX_UNSPOKEN = 220
 const VOICE_PREF_KEY = 'jarvis.voice'
 
 /**
- * Rank installed voices by how close they are to the character, now speaking
- * Turkish: a Turkish male if one is installed, low and level, not a novelty
- * voice.
+ * Turkish voices by who they sound like, across the engines JARVIS can land
+ * on. The desktop app is Chromium, which on Windows sees the SAPI voices; the
+ * browser build also sees the vendor's online voices.
  *
- * On Windows the male tr-TR voice is "Microsoft Tolga"; Windows 11 also ships
- * a natural "Tolga Online" variant. Chrome exposes a single "Google Türkçe".
- * Whatever matches by name ranks first, then any other tr-TR voice — every
- * Turkish voice stays a candidate so there is always something to speak with.
+ *   Windows   — "Microsoft Tolga" (male, the stock tr-TR voice). Edge adds
+ *               natural "Emel Online" (female) and "Ahmet Online" (male).
+ *   Chrome    — "Google Türkçe", female.
+ *   macOS     — "Yelda", female.
+ *   Others    — "Filiz" (Polly/Ivona, female), "Seda", "Zeynep", "Elif".
+ */
+const FEMALE_TR = /\b(emel|seda|yelda|filiz|zeynep|elif|sena|aylin|ay[sş]e|g[uü]l|esra|google t[uü]rk[cç]e)\b/i
+const MALE_TR = /\b(tolga|ahmet|cem|kerem|mehmet|fettah|fahrettin)\b/i
+
+/** A voice that is plainly not the one we want and must never be picked on
+ *  our behalf — whatever it scored, and even if an older build saved it. */
+const excluded = (v: SpeechSynthesisVoice) =>
+  MALE_TR.test(v.name) || /\bmale\b/i.test(v.name) || /\bman\b/i.test(v.name)
+
+/**
+ * Rank installed voices by how close they are to the character: a Turkish
+ * woman's voice, clear and level, not a novelty voice. Name matches decide;
+ * quality variants of the same voice reorder within them.
  */
 function score(v: SpeechSynthesisVoice): number {
   const n = v.name.toLowerCase()
+  if (excluded(v)) return -1000
+
   let s = 0
-
-  // The Windows Turkish male voice, and the closest thing to the character
-  // available without leaving the machine.
-  if (n.includes('tolga')) s += 100
-  else if (n.includes('google türkçe') || n.includes('google turkce')) s += 60
-  // Other Turkish voices — usable, typically female-presenting.
-  else if (/\b(emel|sena|filiz|yelda|aylin)\b/.test(n)) s += 40
-
-  // Higher-quality variants of whatever matched above.
+  if (FEMALE_TR.test(n)) s += 100
   if (n.includes('natural')) s += 30
-  else if (n.includes('enhanced') || n.includes('premium') || n.includes('online')) s += 20
-
-  // Any tr-TR voice clears the usability bar on its own; the name bonuses above
-  // only reorder them. A generic "tr" voice needs a name match to qualify.
+  else if (/enhanced|premium|online|neural/.test(n)) s += 20
   if (/tr[-_]tr/i.test(v.lang)) s += 40
   else if (/^tr/i.test(v.lang)) s += 20
 
-  // Voices that clearly aren't a butler.
+  // Voices that clearly aren't an assistant.
   if (/grandma|grandpa|bubbles|jester|bells|boing|whisper|zarvox|superstar|trinoids|wobble|bahh|organ|cellos|bad news|good news/.test(n)) {
     s -= 200
   }
-
   return s
 }
 
-/** Only voices that scored on being Turkish (or a Turkish name match), so the
- *  picker cycles the installed tr-TR voices and nothing else. */
-const USABLE = 40
+/** A female name match plus being Turkish. An unnamed tr-TR voice is kept
+ *  out of the automatic choice: on Windows that is nearly always Tolga under
+ *  another label, and guessing wrong is what this rewrite is for. */
+const USABLE = 120
 
 /** Best-first list of usable voices — also what the voice picker cycles. */
 export function candidateVoices(): SpeechSynthesisVoice[] {
@@ -219,22 +224,63 @@ export function candidateVoices(): SpeechSynthesisVoice[] {
 
 let cachedVoice: SpeechSynthesisVoice | null | undefined
 
+/** Noted once in the console when no Turkish female voice is installed. */
+let notedFallback = false
+
+function readPref(): string | null {
+  try {
+    return localStorage.getItem(VOICE_PREF_KEY)
+  } catch {
+    return null
+  }
+}
+
+function writePref(name: string | null) {
+  try {
+    if (name) localStorage.setItem(VOICE_PREF_KEY, name)
+    else localStorage.removeItem(VOICE_PREF_KEY)
+  } catch {
+    /* storage unavailable — the ranking still picks the same voice next time */
+  }
+}
+
 function pickVoice(): SpeechSynthesisVoice | null {
   if (cachedVoice !== undefined) return cachedVoice
   const all = speechSynthesis.getVoices()
   if (!all.length) return null // not loaded yet — try again next utterance
 
-  // Honour an explicit choice made with the voice picker. A saved name that no
-  // longer resolves is dropped rather than left to resurrect itself silently
-  // if that voice is ever reinstalled.
-  const saved = localStorage.getItem(VOICE_PREF_KEY)
+  // Honour the saved choice — whether made with the picker or picked here on a
+  // previous run — as long as it is still installed and not an excluded voice.
+  // A Tolga saved by an older build is dropped here, not resurrected.
+  const saved = readPref()
   if (saved) {
     const hit = all.find((v) => v.name === saved)
-    if (hit) return (cachedVoice = hit)
-    localStorage.removeItem(VOICE_PREF_KEY)
+    if (hit && !excluded(hit) && /^tr/i.test(hit.lang)) {
+      return (cachedVoice = hit)
+    }
+    writePref(null)
   }
 
-  cachedVoice = candidateVoices()[0] ?? all.find((v) => /^tr/i.test(v.lang)) ?? null
+  const best = candidateVoices()[0]
+  if (best) {
+    // Persist the automatic choice too, so a voice installed later doesn't
+    // silently change who JARVIS sounds like between runs.
+    writePref(best.name)
+    return (cachedVoice = best)
+  }
+
+  // No Turkish female voice on this machine — on Windows inside Electron that
+  // is the usual case, since only Tolga ships. A female voice is a preference,
+  // not a requirement: speaking in another voice beats not speaking at all, so
+  // fall back to any non-excluded Turkish voice, then to any Turkish voice.
+  if (!notedFallback) {
+    notedFallback = true
+    console.info('[jarvis] no Turkish female voice installed — using the fallback Turkish voice')
+  }
+  cachedVoice =
+    all.find((v) => /^tr/i.test(v.lang) && !excluded(v)) ??
+    all.find((v) => /^tr/i.test(v.lang)) ??
+    null
   return cachedVoice
 }
 
@@ -257,7 +303,7 @@ export function cycleVoice(): string {
   const now = pickVoice()
   const i = list.findIndex((v) => v.name === now?.name)
   const next = list[(i + 1) % list.length]
-  localStorage.setItem(VOICE_PREF_KEY, next.name)
+  writePref(next.name)
   cachedVoice = next
   return next.name
 }
@@ -376,7 +422,7 @@ export function createSpeaker(): Speaker {
     // premium path automatic with no flag to set. It falls back to the browser
     // voice on any failure, so a student without a key still hears him speak.
     // `nativeBroken` latches on once the system voice has proved unusable.
-    if (USE_ELEVENLABS || caps().tts || nativeBroken) {
+    if (USE_ELEVENLABS || caps().tts || (nativeBroken && cloudVoiceAvailable())) {
       // Recorded at the moment the tier is chosen rather than only when the
       // native voice latches over. Without this the panel reported 'system'
       // for a session that had spoken every one of its sentences through
@@ -436,8 +482,14 @@ export function createSpeaker(): Speaker {
       const spoke = await speakNative(item.text)
       if (spoke || cancelled) return
 
-      // The OS voice produced no sound. That is not recoverable by retrying it,
-      // so latch it off and rescue this sentence through the bridge's speech
+      // The OS voice produced no sound. Rescuing through the cloud voice only
+      // makes sense when there is one: with no ElevenLabs key the bridge's
+      // /tts answers 503 for every sentence, so latching over to it turned one
+      // failed utterance into a failed request per sentence for the rest of
+      // the session. Without a cloud voice, keep using the system voice.
+      if (!cloudVoiceAvailable()) return
+
+      // Latch it off and rescue this sentence through the bridge's speech
       // proxy — which already holds an ElevenLabs key borrowed from the MCP
       // config. Losing the better timbre is a far smaller failure than a
       // assistant that answers in silence.
@@ -480,10 +532,10 @@ export function createSpeaker(): Speaker {
       // change with stakes, and that steadiness is most of the effect. This
       // lands around 130 wpm, below the median for film dialogue.
       u.rate = 0.92
-      // Mid-baritone, and *not* pushed lower for gravitas. The voice is
-      // clarity-weighted rather than chest-weighted; dropping it further reads
-      // as a film-trailer voiceover, which is the wrong character entirely.
-      u.pitch = 0.95
+      // The voice's own pitch. The female voices are already where they should
+      // be; nudging them down (as the old baritone setting did) only muddies
+      // them.
+      u.pitch = 1
 
       // speechSynthesis exposes no amplitude, so drive the reactor from a
       // synthetic envelope. It only has to look like speech, not match it.
@@ -733,6 +785,10 @@ export function createSpeaker(): Speaker {
     level: () => outLevel,
   }
 }
+
+/** Whether any cloud voice can actually answer: the bridge holds a key, or
+ *  one was baked into the bundle for direct mode. */
+const cloudVoiceAvailable = () => caps().tts || Boolean(env.elevenKey)
 
 /** Only used when USE_ELEVENLABS is on. Bridge proxy first (it already holds
  *  the key), then a direct key, then null to fall back to the native voice. */
