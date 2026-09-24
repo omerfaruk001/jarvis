@@ -238,7 +238,7 @@ function connect(): Promise<WebSocket> {
 
     const timer = setTimeout(() => {
       ws.close()
-      settle(new Error('Bridge not responding — is `npm run bridge` running?'))
+      settle(new Error('Bridge yanıt vermiyor — JARVIS\'i yeniden başlatın.'))
     }, 6000)
 
     ws.onopen = () => {
@@ -265,17 +265,16 @@ function connect(): Promise<WebSocket> {
        */
       settle(
         new Error(
-          `Cannot reach the bridge at ${BRIDGE_WS_URL}. Either it is not ` +
-            'running (start it with `npm start`), or this page is on a port it ' +
-            `refuses — it accepts localhost:5173-5199 and 4173-4199, and this ` +
-            `page is on ${location.port || '80'}.`,
+          `Bridge'e ulaşılamıyor (${BRIDGE_WS_URL}). Ya çalışmıyor (\`npm start\` ile ` +
+            'başlatın) ya da bu sayfa kabul etmediği bir portta — yalnızca ' +
+            `localhost:5173-5199 ve 4173-4199 kabul edilir, bu sayfa ${location.port || '80'} portunda.`,
         ),
       )
     }
     ws.onclose = () => {
       // A close before open is just a failed dial; after open it's a lost
       // session, and the two want different handling.
-      settle(new Error('The bridge closed the connection.'))
+      settle(new Error('Bridge bağlantıyı kapattı.'))
       if (socket === ws) {
         socket = null
         onConnection?.('lost')
@@ -398,7 +397,7 @@ export async function ask(
     const arm = () => {
       clearTimeout(timer)
       timer = window.setTimeout(() => {
-        fail(new Error('The bridge went quiet — that turn was lost, sir.'))
+        fail(new Error('Bridge sessiz kaldı — bu yanıt kayboldu, efendim.'))
       }, IDLE_TIMEOUT_MS)
     }
 
@@ -445,7 +444,7 @@ export async function ask(
             break
 
           case 'error':
-            fail(new Error(msg.message ?? 'The bridge reported an error.'))
+            fail(new Error(msg.message ?? 'Bridge bir hata bildirdi.'))
             break
         }
       } catch (err) {
@@ -454,10 +453,10 @@ export async function ask(
     }
 
     const onClose = () => {
-      fail(new Error('The bridge disconnected mid-answer — that session is gone.'))
+      fail(new Error('Bridge yanıtın ortasında koptu — oturum kayboldu.'))
     }
     const onError = () => {
-      fail(new Error('The connection to the bridge failed.'))
+      fail(new Error('Bridge bağlantısı başarısız oldu.'))
     }
 
     pending = { finish }

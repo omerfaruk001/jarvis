@@ -8,14 +8,14 @@ import { Pointer } from './Pointer'
 import { GestureGuide } from './GestureGuide'
 
 const statusText: Record<Phase, string> = {
-  offline: 'OFFLINE',
-  boot: 'INITIALISING',
-  dormant: 'STANDBY — SAY “HEY JARVIS”',
-  waking: 'ONLINE',
-  listening: 'LISTENING',
-  thinking: 'PROCESSING',
-  tooling: 'ACCESSING SYSTEMS',
-  speaking: 'RESPONDING',
+  offline: 'ÇEVRİMDIŞI',
+  boot: 'BAŞLATILIYOR',
+  dormant: 'BEKLEMEDE — “HEY JARVIS” DEYİN',
+  waking: 'ÇEVRİMİÇİ',
+  listening: 'DİNLİYORUM',
+  thinking: 'İŞLENİYOR',
+  tooling: 'SİSTEMLERE ERİŞİLİYOR',
+  speaking: 'YANITLIYORUM',
 }
 
 function Corner({ at }: { at: 'tl' | 'tr' | 'bl' | 'br' }) {
@@ -191,7 +191,7 @@ export function Hud() {
         {ui.chrome.brand && (
           <div className="brand">
             <span className="brand-mark">J.A.R.V.I.S.</span>
-            <span className="brand-sub">Just A Rather Very Intelligent System</span>
+            <span className="brand-sub">Son Derece Zeki Bir Sistem</span>
           </div>
         )}
 
@@ -210,8 +210,8 @@ export function Hud() {
       {/* Left rail: which integrations are live */}
       {ui.chrome.systems && (
         <aside className="rail rail-left">
-          <div className="rail-title">SYSTEMS</div>
-          {connected.length === 0 && <div className="rail-item dim">none linked</div>}
+          <div className="rail-title">SİSTEMLER</div>
+          {connected.length === 0 && <div className="rail-item dim">bağlı değil</div>}
           {connected.map((c) => (
             <div key={c} className="rail-item">
               <span className="tick" />
@@ -220,14 +220,14 @@ export function Hud() {
           ))}
           <div className="rail-item">
             <span className="tick" />
-            Web
+            İnternet
           </div>
         </aside>
       )}
 
       {/* Right rail: live telemetry, mostly for flavour */}
       <aside className="rail rail-right">
-        <div className="rail-title">SIGNAL</div>
+        <div className="rail-title">SİNYAL</div>
         <div className="meter">
           <div className="meter-fill" style={{ height: `${level * 100}%` }} />
         </div>
@@ -273,7 +273,7 @@ export function Hud() {
                 exit={{ opacity: 0 }}
                 transition={{ type: 'spring', stiffness: 320, damping: 32 }}
               >
-                <span className="log-who">{t.role === 'user' ? 'YOU' : 'JARVIS'}</span>
+                <span className="log-who">{t.role === 'user' ? 'SİZ' : 'JARVIS'}</span>
                 {/* Only his half decodes. What the user said was never
                     transmitted from anywhere — dressing it up as machine
                     output would be a lie about where the words came from. */}
@@ -312,11 +312,11 @@ export function Hud() {
 
       <footer className="hud-bottom">
         <span className="hint">
-          say <b>“hey jarvis”</b> · <kbd>Space</kbd> to talk · <kbd>G</kbd> hands
+          <b>“hey jarvis”</b> deyin · konuşmak için <kbd>Boşluk</kbd> · <kbd>G</kbd> eller
           {voice && (
             <>
               {' · '}
-              <kbd>V</kbd> voice: {voice.replace(/\(.*?\)/g, '').trim()}
+              <kbd>V</kbd> ses: {voice.replace(/\(.*?\)/g, '').trim()}
             </>
           )}
         </span>
@@ -332,7 +332,7 @@ export function Hud() {
       <Pointer />
       {(gestures || looking) && (
         <div className="hands-live">
-          {looking ? `LOOKING — ${looking.toUpperCase()}` : 'CAMERA ON · G TO STOP'}
+          {looking ? `BAKIYORUM — ${looking.toLocaleUpperCase('tr-TR')}` : 'KAMERA AÇIK · DURDURMAK İÇİN G'}
         </div>
       )}
       <GestureGuide live={gestures} />

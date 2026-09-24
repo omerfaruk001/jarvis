@@ -27,7 +27,14 @@ import { readFile, realpath, stat } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve as resolvePath } from 'node:path'
 import { openRemote, proxyError, vetTarget, PROXY_UA } from './net.mjs'
 import { probeUrl, renderPage } from './page.mjs'
-import { localSttAvailable, parseWav, transcribeLocal, warmLocalStt } from './stt.mjs'
+import {
+  localSttAvailable,
+  localSttStatus,
+  parseWav,
+  SttNotReady,
+  transcribeLocal,
+  warmLocalStt,
+} from './stt.mjs'
 
 const PORT = Number(process.env.JARVIS_BRIDGE_PORT ?? 8787)
 
@@ -303,6 +310,12 @@ function decideTool(name) {
 }
 
 const SYSTEM_PROMPT = `You are JARVIS. You are speaking out loud to one person.
+
+LANGUAGE. Always reply in Turkish (Türkçe), whatever language the request or a
+tool result is in. The user is Turkish and hears you through a Turkish voice.
+Where these instructions say "sir", say "efendim". Say numbers, dates and times
+as Turkish words ("yirmi dört Eylül", "saat sekizi çeyrek geçiyor"), never as
+digits. Keep proper names (JARVIS, GitHub) as they are.
 
 LENGTH. Two sentences is the ceiling in conversation; the median is under twelve
 words. Every word is read aloud and the user waits in silence while it plays, so
@@ -707,6 +720,9 @@ const handleRequest = async (req, res) => {
         tts: eleven,
         stt: eleven || local,
         sttEngine: eleven ? 'elevenlabs' : local ? 'local' : null,
+        // Where the local model is: idle | downloading | extracting | loading
+        // | ready | error, with a percentage while it downloads.
+        sttStatus: local ? localSttStatus() : null,
       }),
     )
   }
@@ -957,9 +973,12 @@ const handleRequest = async (req, res) => {
         res.writeHead(200, { ...cors, 'content-type': 'application/json' })
         return res.end(JSON.stringify({ text }))
       } catch (err) {
-        console.error('[jarvis] local transcription failed:', err?.message ?? err)
-        res.writeHead(500, cors)
-        return res.end(String(err?.message ?? err))
+        // Not ready yet is not a failure: say where the model is, at once,
+        // rather than holding the request open for a multi-minute download.
+        const notReady = err instanceof SttNotReady
+        if (!notReady) console.error('[jarvis] yerel transkripsiyon başarısız:', err?.message ?? err)
+        res.writeHead(notReady ? 503 : 500, { ...cors, 'content-type': 'application/json' })
+        return res.end(JSON.stringify({ error: String(err?.message ?? err) }))
       }
     }
 
@@ -1037,24 +1056,41 @@ const wss = new WebSocketServer({
     done(true)
   },
 })
+/**
+ * A second bridge cannot share the port, and before this it died with a stack
+ * trace while the window quietly talked to whichever bridge was already there
+ * — often an older build from another terminal, with none of today's fixes.
+ * Say what happened and how to fix it.
+ */
+server.on('error', (err) => {
+  if (err?.code === 'EADDRINUSE') {
+    console.error(
+      `[jarvis] ${PORT} portu kullanımda — başka bir JARVIS/bridge zaten çalışıyor. ` +
+        'Tüm JARVIS pencerelerini ve "npm start" terminallerini kapatıp yeniden başlatın.',
+    )
+  } else {
+    console.error('[jarvis] bridge başlatılamadı:', err)
+  }
+  process.exit(1)
+})
 server.listen(PORT)
 
-console.log(`[jarvis] bridge listening on ws://localhost:${PORT}`)
+console.log(`[jarvis] bridge dinliyor: ws://localhost:${PORT}`)
 console.log(
-  `[jarvis] speech ${elevenKey() ? 'via ElevenLabs (key from MCP config)' : 'using browser fallback voice'}`,
+  `[jarvis] konuşma sesi: ${elevenKey() ? 'ElevenLabs (anahtar MCP ayarlarından)' : 'sistemin kendi sesi'}`,
 )
-console.log(`[jarvis] model ${MODEL} · effort ${EFFORT}`)
+console.log(`[jarvis] model ${MODEL} · çaba ${EFFORT}`)
 if (!elevenKey()) {
   console.log(
     localSttAvailable()
-      ? '[jarvis] hearing via local Whisper (no ElevenLabs key)'
-      : '[jarvis] no speech recogniser available — install dependencies (sherpa-onnx-node)',
+      ? '[jarvis] konuşma tanıma: yerel Whisper (ElevenLabs anahtarı yok)'
+      : '[jarvis] konuşma tanıma yok — "npm install" çalıştırın (sherpa-onnx-node)',
   )
   warmLocalStt()
 }
 console.log(
-  `[jarvis] writes ${ALLOW_WRITES ? 'ENABLED' : 'disabled'}` +
-    (ALLOW_WRITES ? '' : ' — set JARVIS_ALLOW_WRITES=1 to permit shell/file/device actions'),
+  `[jarvis] yazma işlemleri ${ALLOW_WRITES ? 'AÇIK' : 'kapalı'}` +
+    (ALLOW_WRITES ? '' : ' — kabuk/dosya/cihaz işlemleri için JARVIS_ALLOW_WRITES=1 ayarlayın'),
 )
 // Asynchronous, so it lands a beat after the rest of the banner. Worth printing
 // at all because an extension that is simply not running is indistinguishable
@@ -1063,15 +1099,15 @@ console.log(
 void chromeAvailable().then((ok) => {
   console.log(
     ok
-      ? `[jarvis] browser control ready${ALLOW_WRITES ? '' : ' (reading only — clicking and typing need JARVIS_ALLOW_WRITES=1)'}`
-      : '[jarvis] browser control unavailable — open Chrome with the Claude extension enabled',
+      ? `[jarvis] tarayıcı kontrolü hazır${ALLOW_WRITES ? '' : ' (yalnızca okuma — tıklama ve yazma için JARVIS_ALLOW_WRITES=1)'}`
+      : '[jarvis] tarayıcı kontrolü yok — Claude uzantısı açık bir Chrome başlatın',
   )
 })
 
 console.log(
-  '[jarvis] accepting local dev origins' +
-    (EXTRA_ORIGINS.size ? ` plus ${[...EXTRA_ORIGINS].join(', ')}` : '') +
-    (ALLOW_NO_ORIGIN ? ' and clients that send no origin' : ''),
+  '[jarvis] kabul edilen kaynaklar: yerel geliştirme adresleri' +
+    (EXTRA_ORIGINS.size ? ` ve ${[...EXTRA_ORIGINS].join(', ')}` : '') +
+    (ALLOW_NO_ORIGIN ? ' ve kaynak bildirmeyen istemciler' : ''),
 )
 
 /**
@@ -1079,15 +1115,15 @@ console.log(
  * whatever reaches the client is liable to be spoken.
  */
 const RESULT_FAILURES = {
-  error_during_execution: 'The turn failed part way through.',
-  error_max_turns: 'The turn ran too long and was stopped.',
-  error_max_budget_usd: 'The budget for this turn ran out.',
-  error_max_structured_output_retries: 'The answer could not be assembled.',
-  default: 'The turn ended without an answer.',
+  error_during_execution: 'İşlem yarıda başarısız oldu.',
+  error_max_turns: 'İşlem çok uzun sürdü ve durduruldu.',
+  error_max_budget_usd: 'Bu işlem için ayrılan bütçe tükendi.',
+  error_max_structured_output_retries: 'Yanıt oluşturulamadı.',
+  default: 'İşlem bir yanıt olmadan sona erdi.',
 }
 
 wss.on('connection', (socket) => {
-  console.log('[jarvis] client connected')
+  console.log('[jarvis] istemci bağlandı')
 
   // Answer the HUD straight away rather than making it wait for the agent's
   // first turn. Refined later by the real init message.
@@ -1427,7 +1463,7 @@ wss.on('connection', (socket) => {
                 .filter((s) => s.status !== 'needs-auth' && s.status !== 'failed')
                 .map((s) => s.name)
               send({ type: 'ready', servers: usable })
-              console.log(`[jarvis] ${usable.length} MCP servers available`)
+              console.log(`[jarvis] ${usable.length} MCP sunucusu kullanılabilir`)
             }
             break
         }
@@ -1506,7 +1542,7 @@ wss.on('connection', (socket) => {
   })
 
   socket.on('close', () => {
-    console.log('[jarvis] client disconnected')
+    console.log('[jarvis] istemci ayrıldı')
     closed = true
     deliver?.(null)
     session.close?.()

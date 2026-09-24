@@ -30,9 +30,9 @@ function vendorWasm() {
   try {
     mkdirSync(to, { recursive: true })
     cpSync(from, to, { recursive: true })
-    console.log('  vendored the hand-tracking runtime into public/mediapipe.')
+    console.log('  el takibi çalışma zamanı public/mediapipe içine kopyalandı.')
   } catch (err) {
-    console.warn(`  could not vendor the hand-tracking runtime: ${err.message}`)
+    console.warn(`  el takibi çalışma zamanı kopyalanamadı: ${err.message}`)
   }
 }
 
@@ -72,7 +72,7 @@ async function waitForVite(url, timeoutMs = 30_000) {
 
 vendorWasm()
 
-console.log('\nJ.A.R.V.I.S. desktop (dev) — starting the face on Vite.\n')
+console.log('\nJ.A.R.V.I.S. masaüstü (geliştirme) — arayüz Vite üzerinde başlatılıyor.\n')
 
 // The face: Vite, on a fixed port so we know where to point Electron. Call the
 // binary directly rather than through npm so no shell is involved.
@@ -96,7 +96,7 @@ try {
   shutdown(1)
 }
 
-console.log(`\n  Vite is up; launching Electron against ${url}.\n`)
+console.log(`\n  Vite hazır; Electron ${url} adresiyle açılıyor.\n`)
 
 // Resolve the electron executable through its own package so this works the
 // same on every platform without assuming a global install.

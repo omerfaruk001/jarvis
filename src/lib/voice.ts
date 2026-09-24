@@ -399,8 +399,8 @@ export async function startVoice(h: VoiceHandlers): Promise<Voice> {
     diag.lastError = 'mic'
     h.onError(
       err instanceof DOMException && err.name === 'NotAllowedError'
-        ? 'Microphone access denied — voice input is unavailable.'
-        : 'No microphone available.',
+        ? 'Mikrofon izni verilmedi — sesli giriş kullanılamıyor.'
+        : 'Mikrofon bulunamadı.',
     )
     return { stop: () => {}, live: () => false }
   }
@@ -511,6 +511,14 @@ async function startElevenVoice(h: VoiceHandlers): Promise<Voice> {
         diag.restarts++
         diag.lastError = `stt ${res.status}`
         drop(`transcription failed (${res.status})`)
+        // The bridge explains itself (model still downloading, model failed to
+        // load). Put that on screen: a dropped segment with no word said about
+        // it is exactly the "hears me but never answers" failure.
+        const why = await res
+          .json()
+          .then((b: { error?: string }) => b?.error ?? '')
+          .catch(() => '')
+        h.onError(why || `Konuşma tanıma başarısız oldu (${res.status}).`)
         return
       }
       const { text } = (await res.json()) as { text?: string }
@@ -654,7 +662,7 @@ function startBrowserVoice(h: VoiceHandlers): Voice {
   const Ctor =
     (window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition
   if (!Ctor) {
-    h.onError('This browser has no speech recognition — use Chrome or Edge, or add an ElevenLabs key.')
+    h.onError('Bu tarayıcıda konuşma tanıma yok — Chrome veya Edge kullanın ya da bridge ile başlatın.')
     return { stop: () => {}, live: () => false }
   }
 
@@ -826,14 +834,14 @@ function startBrowserVoice(h: VoiceHandlers): Voice {
       if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') {
         stopped = true
         diag.running = false
-        h.onError('Microphone access was refused — voice input is unavailable.')
+        h.onError('Mikrofon izni reddedildi — sesli giriş kullanılamıyor.')
       } else if (ev.error === 'network' && ++networkFailures === 3) {
         // The recogniser's audio goes to a Google service. Inside Electron
         // that service is never reachable (no API key is built in), so this
         // fails for ever while the level meter still moves. Say so, once,
         // instead of restarting silently every 80ms and looking deaf.
         h.onError(
-          'Speech recognition service unreachable — start the bridge so it can transcribe locally.',
+          'Konuşma tanıma servisine ulaşılamıyor — yerel tanıma için JARVIS\'i bridge ile başlatın.',
         )
       }
     }

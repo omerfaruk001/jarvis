@@ -47,8 +47,8 @@ export function Ignition({ onStart }: { onStart: () => void }) {
       */}
       <span className="ignition-ring" />
       <span className="ignition-label">
-        <span className="ignition-word">INITIALISE</span>
-        <span className="ignition-sub">click, or clap, to power up</span>
+        <span className="ignition-word">BAŞLAT</span>
+        <span className="ignition-sub">başlatmak için tıklayın ya da el çırpın</span>
       </span>
     </button>
   )

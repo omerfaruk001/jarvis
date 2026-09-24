@@ -86,8 +86,8 @@ function startBridge(origins) {
     env.JARVIS_CLAUDE_CODE_PATH = claudeExe
   } else {
     console.warn(
-      '[jarvis] bundled Claude binary not found next to the app; ' +
-        'the SDK will fall back to resolving it from node_modules.',
+      '[jarvis] paketlenmiş Claude programı uygulamanın yanında bulunamadı; ' +
+        "SDK onu node_modules'ten bulmaya çalışacak.",
     )
   }
 
@@ -108,10 +108,10 @@ function startBridge(origins) {
   let child = tryNode()
   child.once('error', (err) => {
     if (err && err.code === 'ENOENT') {
-      console.warn('[jarvis] system node not found; running the bridge on Electron.')
+      console.warn("[jarvis] sistemde node bulunamadı; bridge Electron üzerinde çalıştırılıyor.")
       wire(asElectronNode())
     } else {
-      console.error('[jarvis] bridge failed to start:', err)
+      console.error('[jarvis] bridge başlatılamadı:', err)
     }
   })
   wire(child)
@@ -122,7 +122,7 @@ function startBridge(origins) {
     pipeTagged(c.stdout, process.stdout, '[bridge]')
     pipeTagged(c.stderr, process.stderr, '[bridge]')
     c.on('exit', (code) => {
-      console.log(`[jarvis] bridge exited (${code}).`)
+      console.log(`[jarvis] bridge kapandı (${code}).`)
     })
   }
 }

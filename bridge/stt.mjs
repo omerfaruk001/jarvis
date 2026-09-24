@@ -22,7 +22,7 @@
  */
 
 import { createRequire } from 'node:module'
-import { createWriteStream, existsSync, mkdirSync, renameSync, rmSync } from 'node:fs'
+import { createReadStream, createWriteStream, existsSync, mkdirSync, renameSync, rmSync } from 'node:fs'
 import { spawn } from 'node:child_process'
 import { availableParallelism, homedir } from 'node:os'
 import { join } from 'node:path'
@@ -57,12 +57,26 @@ let sherpa = null
 try {
   sherpa = require('sherpa-onnx-node')
 } catch (err) {
-  console.warn(`[jarvis] local speech recognition unavailable: ${err?.message ?? err}`)
+  console.warn(`[jarvis] yerel konuşma tanıma yüklenemedi: ${err?.message ?? err}`)
 }
 
 /** Whether this machine can transcribe locally at all (the native addon
- *  loaded). The model may still be downloading; transcribe() waits for it. */
+ *  loaded). The model may still be downloading — see localSttStatus(). */
 export const localSttAvailable = () => sherpa !== null
+
+/**
+ * Where the model is, for the HUD. A first run downloads ~640 MB, and a
+ * command spoken during that used to wait on it silently — which from the
+ * outside is indistinguishable from JARVIS not working at all.
+ */
+const status = { state: 'idle', progress: 0, error: '' }
+export const localSttStatus = () => ({ ...status })
+
+const set = (state, progress = status.progress, error = '') => {
+  status.state = state
+  status.progress = progress
+  status.error = error
+}
 
 const modelPresent = () => Object.values(FILES).every((f) => existsSync(join(DIR, f)))
 
@@ -91,12 +105,38 @@ function run(cmd, args) {
   })
 }
 
+/**
+ * The same extraction in pure JavaScript. Slower — about a minute and a half
+ * per 200 MB on a small machine — but it cannot fail for want of a tool:
+ * older Windows 10 builds ship a tar.exe without bzip2 support.
+ */
+async function extractInJs(archive, into) {
+  const bunzip = require('unbzip2-stream')
+  const tar = require('tar-stream')
+  const want = new Set(Object.values(FILES).map((f) => `${NAME}/${f}`))
+  mkdirSync(join(into, NAME), { recursive: true })
+  const ex = tar.extract()
+  ex.on('entry', (header, stream, next) => {
+    if (!want.has(header.name)) {
+      stream.on('end', next)
+      stream.resume()
+      return
+    }
+    const out = createWriteStream(join(into, header.name))
+    out.on('finish', next)
+    out.on('error', next)
+    stream.pipe(out)
+  })
+  await pipeline(createReadStream(archive), bunzip(), ex)
+}
+
 async function download() {
   mkdirSync(MODEL_ROOT, { recursive: true })
   const archive = join(MODEL_ROOT, `${NAME}.tar.bz2.part`)
-  console.log(`[jarvis] downloading the ${SIZE} speech model (one time) from ${URL_}`)
+  console.log(`[jarvis] konuşma modeli indiriliyor (yalnızca ilk sefer, whisper-${SIZE}): ${URL_}`)
+  set('downloading', 0)
   const res = await fetch(URL_)
-  if (!res.ok || !res.body) throw new Error(`model download failed: HTTP ${res.status}`)
+  if (!res.ok || !res.body) throw new Error(`model indirilemedi: HTTP ${res.status}`)
   const total = Number(res.headers.get('content-length')) || 0
   let got = 0
   let shown = 0
@@ -104,9 +144,10 @@ async function download() {
   body.on('data', (c) => {
     got += c.length
     const pct = total ? Math.floor((got / total) * 100) : 0
+    status.progress = pct
     if (pct >= shown + 10) {
       shown = pct - (pct % 10)
-      console.log(`[jarvis] speech model ${shown}%`)
+      console.log(`[jarvis] konuşma modeli %${shown}`)
     }
   })
   await pipeline(body, createWriteStream(archive))
@@ -114,32 +155,45 @@ async function download() {
   // Unpack beside the final directory and move it into place only when every
   // file is there, so an interrupted first run never leaves a half model that
   // looks complete.
+  set('extracting', 100)
+  console.log('[jarvis] konuşma modeli açılıyor…')
   const staging = join(MODEL_ROOT, `${NAME}.staging`)
   rmSync(staging, { recursive: true, force: true })
   mkdirSync(staging, { recursive: true })
   try {
-    await run(tarBinary(), [
-      '-xf', archive,
-      '-C', staging,
-      ...Object.values(FILES).map((f) => `${NAME}/${f}`),
-    ])
+    try {
+      await run(tarBinary(), [
+        '-xf', archive,
+        '-C', staging,
+        ...Object.values(FILES).map((f) => `${NAME}/${f}`),
+      ])
+    } catch (err) {
+      console.warn(`[jarvis] sistem tar'ı açamadı (${err?.message ?? err}); JavaScript ile açılıyor`)
+      rmSync(staging, { recursive: true, force: true })
+      await extractInJs(archive, staging)
+    }
+    if (!Object.values(FILES).every((f) => existsSync(join(staging, NAME, f)))) {
+      throw new Error('model arşivinde beklenen dosyalar yok')
+    }
     rmSync(DIR, { recursive: true, force: true })
     renameSync(join(staging, NAME), DIR)
   } finally {
     rmSync(staging, { recursive: true, force: true })
     rmSync(archive, { force: true })
   }
-  console.log(`[jarvis] speech model ready in ${DIR}`)
+  console.log(`[jarvis] konuşma modeli hazır: ${DIR}`)
 }
 
 let loading = null
+let ready = null
 
 /** Load (downloading first if needed) exactly once; a failure is not cached,
- *  so the next utterance retries rather than the app staying deaf. */
+ *  so the next attempt retries rather than the app staying deaf. */
 function recognizer() {
-  if (!sherpa) return Promise.reject(new Error('local speech recognition is not installed'))
+  if (!sherpa) return Promise.reject(new Error('yerel konuşma tanıma kurulu değil'))
   loading ??= (async () => {
     if (!modelPresent()) await download()
+    set('loading', 100)
     const rec = await sherpa.OfflineRecognizer.createAsync({
       featConfig: { sampleRate: 16000, featureDim: 80 },
       modelConfig: {
@@ -155,23 +209,30 @@ function recognizer() {
         debug: 0,
       },
     })
-    console.log(`[jarvis] local speech recognition ready (whisper-${SIZE}, ${LANGUAGE})`)
+    ready = rec
+    set('ready', 100)
+    console.log(`[jarvis] yerel konuşma tanıma hazır (whisper-${SIZE}, ${LANGUAGE})`)
     return rec
   })().catch((err) => {
     loading = null
+    set('error', 0, String(err?.message ?? err))
     throw err
   })
   return loading
 }
 
 /** Start the download/load in the background so the first command isn't the
- *  one that waits for it. Errors are reported, and retried on first use. */
+ *  one that waits for it. Errors are reported, and retried on next use. */
 export function warmLocalStt() {
   if (!sherpa) return
   recognizer().catch((err) =>
-    console.error(`[jarvis] local speech model failed to load: ${err?.message ?? err}`),
+    console.error(`[jarvis] konuşma modeli yüklenemedi: ${err?.message ?? err}`),
   )
 }
+
+/** Thrown while the model is still on its way, so /stt can answer at once
+ *  with where it is instead of holding the request for minutes. */
+export class SttNotReady extends Error {}
 
 /**
  * Whisper, given silence or a cough, confidently produces the closing line of
@@ -231,7 +292,19 @@ export function parseWav(buf) {
 
 /** Transcribe one segment. Returns '' for silence and for known hallucinations. */
 export async function transcribeLocal(samples, sampleRate) {
-  const rec = await recognizer()
+  if (!ready) {
+    // Kick a retry if the last attempt failed, then report instead of waiting.
+    if (status.state === 'error' || status.state === 'idle') warmLocalStt()
+    const { state, progress, error } = status
+    throw new SttNotReady(
+      state === 'downloading'
+        ? `Konuşma modeli indiriliyor (%${progress}) — ilk açılışta bir kez olur, lütfen bekleyin.`
+        : state === 'extracting' || state === 'loading'
+          ? 'Konuşma modeli hazırlanıyor — birkaç saniye içinde hazır.'
+          : `Konuşma modeli yüklenemedi: ${error || 'bilinmeyen hata'} — yeniden deneniyor.`,
+    )
+  }
+  const rec = ready
   // Half a second of silence either side. Whisper was trained on 30-second
   // windows and, handed a clip that starts and stops on the words, routinely
   // drops the tail — measured on Turkish commands: "Carvis." came back "Jar",

@@ -64,7 +64,7 @@ function watchMedia(node: HTMLDivElement | null) {
   node.querySelectorAll('img').forEach((img) => {
     if (img.dataset.watched) return
     img.dataset.watched = '1'
-    const fail = () => replaceWithNote(img, 'image unavailable')
+    const fail = () => replaceWithNote(img, 'görsel yok')
     if (img.complete && img.naturalWidth === 0) fail()
     else img.addEventListener('error', fail, { once: true })
   })
@@ -72,7 +72,7 @@ function watchMedia(node: HTMLDivElement | null) {
   node.querySelectorAll('video').forEach((video) => {
     if (video.dataset.watched) return
     video.dataset.watched = '1'
-    const fail = () => replaceWithNote(video, 'video unavailable')
+    const fail = () => replaceWithNote(video, 'video yok')
     // A <video> the sanitiser stripped the src from never attempts a load, so
     // it never errors either — it just sits there as a black rectangle. The
     // <img> equivalent is caught by naturalWidth; this is the check that stands
@@ -163,7 +163,7 @@ const Card = memo(function Card({ panel }: { panel: Panel }) {
       {/* Sanitised above; `stagger` is handled in CSS so it applies to whatever
           children the model happened to author. */}
       {empty ? (
-        <p className="p-empty">no content returned</p>
+        <p className="p-empty">içerik gelmedi</p>
       ) : (
         <div
           ref={body}

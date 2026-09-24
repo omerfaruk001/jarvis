@@ -292,14 +292,14 @@ export function currentVoiceName(): string {
   if (TTS_ENGINE === 'kokoro' && !kokoro.isUnavailable()) {
     return KOKORO_VOICE.replace(/^bm_/, '')
   }
-  return pickVoice()?.name ?? 'default'
+  return pickVoice()?.name ?? 'varsayılan'
 }
 
 /** Step to the next candidate — lets you audition voices on your own machine
  *  rather than trusting a ranking to be right about how they sound. */
 export function cycleVoice(): string {
   const list = candidateVoices()
-  if (!list.length) return 'default'
+  if (!list.length) return 'varsayılan'
   const now = pickVoice()
   const i = list.findIndex((v) => v.name === now?.name)
   const next = list[(i + 1) % list.length]

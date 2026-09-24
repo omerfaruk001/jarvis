@@ -16,12 +16,12 @@ import { diag } from '../lib/hands'
  * because that is when you have forgotten.
  */
 
-const MOVES: { gesture: string; hand: string; does: string }[] = [
-  { gesture: 'point', hand: '☝', does: 'move the cursor' },
-  { gesture: 'pinch', hand: '🤏', does: 'grab a blade · move it · press' },
-  { gesture: 'open', hand: '🖐', does: 'let go' },
-  { gesture: 'peace', hand: '✌', does: 'two fingers up-down to scroll' },
-  { gesture: 'frame', hand: '📐', does: 'two L-corners to resize' },
+const MOVES: { gesture: string; name: string; hand: string; does: string }[] = [
+  { gesture: 'point', name: 'işaret', hand: '☝', does: 'imleci hareket ettir' },
+  { gesture: 'pinch', name: 'kıstır', hand: '🤏', does: 'paneli tut · taşı · bas' },
+  { gesture: 'open', name: 'aç', hand: '🖐', does: 'bırak' },
+  { gesture: 'peace', name: 'zafer', hand: '✌', does: 'iki parmak yukarı-aşağı kaydır' },
+  { gesture: 'frame', name: 'çerçeve', hand: '📐', does: 'iki L köşeyle boyutlandır' },
 ]
 
 /** How long the legend stays after the first successful press. */
@@ -63,16 +63,16 @@ export function GestureGuide({ live }: { live: boolean }) {
           exit={{ opacity: 0, y: 8, filter: 'blur(6px)', transition: { duration: 0.5 } }}
           transition={{ type: 'spring', stiffness: 260, damping: 28 }}
         >
-          <div className="gguide-head">HAND CONTROL</div>
+          <div className="gguide-head">EL KONTROLÜ</div>
           {MOVES.map((m) => (
             <div key={m.gesture} className="gguide-row">
               <span className="gguide-icon">{m.hand}</span>
-              <span className="gguide-name">{m.gesture}</span>
+              <span className="gguide-name">{m.name}</span>
               <span className="gguide-does">{m.does}</span>
             </div>
           ))}
           <div className="gguide-foot">
-            grab a blade by its bar · <kbd>G</kbd> to stop
+            paneli çubuğundan tutun · durdurmak için <kbd>G</kbd>
           </div>
         </motion.div>
       )}

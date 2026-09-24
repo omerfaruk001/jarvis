@@ -106,14 +106,14 @@ export async function startVad(h: VadHandlers): Promise<Vad> {
   } catch (err) {
     h.onError(
       err instanceof DOMException && err.name === 'NotAllowedError'
-        ? 'Microphone access denied — voice input is unavailable.'
-        : 'No microphone available.',
+        ? 'Mikrofon izni verilmedi — sesli giriş kullanılamıyor.'
+        : 'Mikrofon bulunamadı.',
     )
     return { stop: () => {}, setGuard: () => {}, live: () => false, meter: () => ({ energy: 0, floor: 0, threshold: 0, speaking: false }) }
   }
 
   if (typeof MediaRecorder === 'undefined') {
-    h.onError('This browser cannot record audio — voice input is unavailable.')
+    h.onError('Bu tarayıcı ses kaydedemiyor — sesli giriş kullanılamıyor.')
     return { stop: () => {}, setGuard: () => {}, live: () => false, meter: () => ({ energy: 0, floor: 0, threshold: 0, speaking: false }) }
   }
 

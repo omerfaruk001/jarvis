@@ -30,7 +30,7 @@ import {
   type Msg,
 } from './lib/brain'
 import { startAnalyser, micLevel } from './lib/audio'
-import { probeCapabilities } from './lib/capabilities'
+import { caps, probeCapabilities, refreshSttStatus, type SttStatus } from './lib/capabilities'
 import { env } from './config'
 
 /**
@@ -321,6 +321,61 @@ export default function App() {
     store.getState().setError(message)
   }
 
+  // -- can he hear? ---------------------------------------------------------
+
+  /**
+   * Say, on screen, why JARVIS cannot hear — every case that used to look like
+   * a working assistant that simply never answered.
+   */
+  const reportHearing = () => {
+    const c = caps()
+    const s = store.getState()
+    const inElectron = navigator.userAgent.includes('Electron')
+    if (usingBridge && !c.reachable) {
+      s.setError(
+        "Bridge'e ulaşılamıyor — JARVIS'i kapatıp yeniden başlatın. " +
+          'Terminal açıksa "[jarvis]" satırlarında hatayı görebilirsiniz.',
+      )
+      return
+    }
+    if (inElectron && !c.stt) {
+      s.setError(
+        c.outdated
+          ? 'Eski bir bridge çalışıyor (yerel konuşma tanıma yok). Tüm JARVIS pencerelerini ve ' +
+              '"npm start" terminallerini kapatıp yeniden başlatın.'
+          : 'Konuşma tanıma kullanılamıyor: "npm install" çalıştırıp JARVIS\'i yeniden başlatın.',
+      )
+      return
+    }
+    if (c.sttEngine === 'local') watchModel(c.sttStatus ?? null)
+  }
+
+  /** Show the model download on screen until it is ready. */
+  const watchModel = (first: SttStatus | null) => {
+    const show = (st: SttStatus | null) => {
+      if (!st || st.state === 'ready') {
+        if (store.getState().error?.startsWith('Konuşma modeli')) store.getState().setError(null)
+        return true
+      }
+      store
+        .getState()
+        .setError(
+          st.state === 'downloading'
+            ? `Konuşma modeli indiriliyor: %${st.progress} — ilk açılışta bir kez olur. Bitince sizi duyabileceğim.`
+            : st.state === 'error'
+              ? `Konuşma modeli yüklenemedi: ${st.error} — yeniden deneniyor.`
+              : 'Konuşma modeli hazırlanıyor…',
+        )
+      return false
+    }
+    if (show(first)) return
+    const id = window.setInterval(() => {
+      void refreshSttStatus().then((st) => {
+        if (show(st)) window.clearInterval(id)
+      })
+    }, 2000)
+  }
+
   // -- power on -------------------------------------------------------------
 
   const powerOn = async () => {
@@ -345,8 +400,8 @@ export default function App() {
         .getState()
         .setError(
           err instanceof Error
-            ? `Power-up failed: ${err.message}`
-            : 'Power-up failed. Click to try again.',
+            ? `Başlatma başarısız: ${err.message}`
+            : 'Başlatma başarısız. Tekrar denemek için tıklayın.',
         )
     }
   }
@@ -459,18 +514,18 @@ export default function App() {
     // on screen still shows it. Better to say so than to let him quietly forget.
     watchConnection((state) => {
       if (state === 'lost') {
-        store.getState().setError('Bridge connection lost — reconnecting.')
+        store.getState().setError('Bridge bağlantısı koptu — yeniden bağlanılıyor.')
       } else if (state === 'reconnected') {
         store
           .getState()
-          .setError('Bridge reconnected. The previous conversation was not kept.')
+          .setError('Bridge yeniden bağlandı. Önceki konuşma korunmadı.')
       }
     })
     const warming = warm().catch((err: Error) => s.setError(err.message))
 
     if (!usingBridge && !env.anthropicKey) {
       s.setError(
-        'No Anthropic API key — copy .env.example to .env.local and set VITE_ANTHROPIC_API_KEY.',
+        'Anthropic API anahtarı yok — .env.example dosyasını .env.local olarak kopyalayıp VITE_ANTHROPIC_API_KEY ayarlayın.',
       )
     }
 
@@ -518,6 +573,7 @@ export default function App() {
     // first turn already uses ElevenLabs when a key is present and the browser
     // fallback when it is not — no flag, no reload.
     await probeCapabilities()
+    reportHearing()
 
     // One voice loop, started once, running until the page closes.
     voice.current = await startVoice({
@@ -626,8 +682,8 @@ export default function App() {
                 .getState()
                 .setError(
                   err?.name === 'NotAllowedError'
-                    ? 'Camera access denied — gesture control is unavailable.'
-                    : `Gesture control failed to start: ${err?.message ?? err}`,
+                    ? 'Kamera izni verilmedi — el hareketiyle kontrol kullanılamıyor.'
+                    : `El hareketiyle kontrol başlatılamadı: ${err?.message ?? err}`,
                 )
             })
         }
@@ -643,13 +699,13 @@ export default function App() {
         silence()
         const t = createSpeaker()
         speaker.current = t
-        t.say('Audio test. If you can hear this, speech output is working, sir.')
+        t.say('Ses testi. Bunu duyabiliyorsanız ses çıkışı çalışıyor, efendim.')
         void t.end().then(() => {
           const d = (window as unknown as Record<string, Record<string, unknown>>).__tts
           console.info('[jarvis] audio test →', d)
           if (d && d.started === 0 && d.rescued === 0) {
             store.getState().setError(
-              `No sound produced. engine=${d.engine} voice=${d.voice} error=${d.lastError || 'none'}`,
+              `Ses üretilmedi. motor=${d.engine} ses=${d.voice} hata=${d.lastError || 'yok'}`,
             )
           }
         })

@@ -22,6 +22,17 @@ import { BONES, INDEX_TIP, THUMB_TIP, TIPS, WRIST, diag, hands } from '../lib/ha
 /** Bones are drawn twice: a wide soft pass for the glow, a tight bright one
  *  on top for the line itself. One pass with a big shadow reads as fog. */
 const GLOW_WIDTH = 7
+
+/** The gesture names as the tag under each hand shows them. */
+const GESTURE_TR: Record<string, string> = {
+  point: 'işaret',
+  pinch: 'kıstır',
+  frame: 'çerçeve',
+  open: 'açık',
+  fist: 'yumruk',
+  peace: 'zafer',
+  none: 'yok',
+}
 const LINE_WIDTH = 2
 
 export function Pointer() {
@@ -195,7 +206,7 @@ export function Pointer() {
           // Which hand, and what it is doing. Naming the hand matters once
           // there are two of them: it is the only way to tell at a glance
           // which cursor is yours to move.
-          const tag = `${hand.handedness === 'right' ? 'RIGHT' : 'LEFT'} · ${hand.gesture.toUpperCase()}`
+          const tag = `${hand.handedness === 'right' ? 'SAĞ' : 'SOL'} · ${(GESTURE_TR[hand.gesture] ?? hand.gesture).toLocaleUpperCase('tr-TR')}`
           ctx.fillText(tag, p[WRIST].x, p[WRIST].y + 22 * scale)
         }
       }

@@ -39,9 +39,9 @@ function vendorWasm() {
   try {
     mkdirSync(to, { recursive: true })
     cpSync(from, to, { recursive: true })
-    console.log('  vendored the hand-tracking runtime into public/mediapipe.')
+    console.log('  el takibi çalışma zamanı public/mediapipe içine kopyalandı.')
   } catch (err) {
-    console.warn(`  could not vendor the hand-tracking runtime: ${err.message}`)
+    console.warn(`  el takibi çalışma zamanı kopyalanamadı: ${err.message}`)
   }
 }
 
@@ -65,7 +65,7 @@ function run(name, command, args, env) {
   child.on('exit', (code) => {
     // If either half dies the other is useless, so take the whole thing down
     // rather than leave a half-running app that looks alive but cannot answer.
-    console.log(`[${name}] exited (${code}); stopping the rest.`)
+    console.log(`[${name}] kapandı (${code}); diğerleri de durduruluyor.`)
     shutdown(code ?? 0)
   })
   children.push(child)
@@ -105,18 +105,18 @@ const port = process.env.PORT
 const bridgeEnv = writes ? { JARVIS_ALLOW_WRITES: '1' } : {}
 if (port) {
   bridgeEnv.JARVIS_ALLOWED_ORIGINS = `http://localhost:${port},http://127.0.0.1:${port}`
-  console.log(`  serving the face on port ${port}; the bridge will accept it.\n`)
+  console.log(`  arayüz ${port} portunda sunuluyor; bridge bunu kabul edecek.\n`)
 }
 
 vendorWasm()
 
-console.log('\nJ.A.R.V.I.S. starting — the brain and the face.\n')
+console.log('\nJ.A.R.V.I.S. başlıyor — beyin ve arayüz.\n')
 run('bridge', 'node', ['bridge/server.mjs'], bridgeEnv)
 // npm is a shell script on most systems; call the vite binary directly so we do
 // not need shell:true (which would break the argument handling above).
 run('face', process.execPath, ['node_modules/vite/bin/vite.js'], {})
 
 console.log(
-  '\nWhen it says the dev server is ready, open the URL it prints in Chrome,\n' +
-    'click INITIALISE, and say "Hey Jarvis". Ctrl-C stops everything.\n',
+  '\nGeliştirme sunucusu hazır olduğunda yazdığı adresi Chrome\'da açın,\n' +
+    'BAŞLAT\'a tıklayın ve "Hey Jarvis" deyin. Ctrl-C her şeyi durdurur.\n',
 )
