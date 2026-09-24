@@ -422,7 +422,7 @@ export function createSpeaker(): Speaker {
     // premium path automatic with no flag to set. It falls back to the browser
     // voice on any failure, so a student without a key still hears him speak.
     // `nativeBroken` latches on once the system voice has proved unusable.
-    if (USE_ELEVENLABS || caps().tts || (nativeBroken && cloudVoiceAvailable())) {
+    if ((USE_ELEVENLABS || caps().tts || (nativeBroken && cloudVoiceAvailable())) && !cloudResting()) {
       // Recorded at the moment the tier is chosen rather than only when the
       // native voice latches over. Without this the panel reported 'system'
       // for a session that had spoken every one of its sentences through
@@ -474,9 +474,12 @@ export function createSpeaker(): Speaker {
       const url = item.audio ? await item.audio : null
       if (cancelled) return
       // A failed generation is not a failed turn — drop to the system voice.
+      // Nor is a clip that will not play (a truncated stream, a refused
+      // autoplay): that sentence goes to the system voice too, instead of
+      // being silently skipped.
       if (url) {
-        await playUrl(url, item.text)
-        return
+        const played = await playUrl(url, item.text)
+        if (played || cancelled) return
       }
 
       const spoke = await speakNative(item.text)
@@ -631,8 +634,9 @@ export function createSpeaker(): Speaker {
       speechSynthesis.speak(u)
     })
 
+  /** Resolves true once the clip has actually played, false if it could not. */
   const playUrl = (url: string, text: string) =>
-    new Promise<void>((resolve) => {
+    new Promise<boolean>((resolve) => {
       const audio = new Audio(url)
       currentAudio = audio
       // The generated path is an engine speaking just as much as the OS voice
@@ -671,39 +675,41 @@ export function createSpeaker(): Speaker {
       tick()
 
       let done = false
-      const finish = () => {
+      let playing = false
+      const finish = (ok = playing) => {
         if (done) return
         done = true
         cancelAnimationFrame(raf)
         outLevel = 0.12
         URL.revokeObjectURL(url)
         if (currentAudio === audio) currentAudio = null
-        resolve()
+        resolve(ok)
       }
       // Sound is genuinely coming out. This is the cloud/neural counterpart of
       // SpeechSynthesisUtterance.onstart, and it is what makes the diagnostics
       // verdict — and the T self-test — tell the truth on the premium path.
       audio.onplaying = () => {
+        playing = true
         diag.started++
         diag.lastError = ''
       }
-      audio.onended = finish
+      audio.onended = () => finish(true)
       audio.onerror = () => {
         // A decode or network failure on a blob we already hold is rare, but
         // silent when it happens: the sentence simply never plays and the queue
         // moves on. Count it rather than letting it look like nothing was said.
         diag.failures++
         diag.lastError = 'audio-element'
-        finish()
+        finish(false)
       }
       // The one that matters for barge-in: cancel() pauses the element, and a
       // paused element never fires `ended`. Without this the promise never
       // settles and every await behind it hangs for the life of the page.
-      audio.onpause = finish
+      audio.onpause = () => finish()
       void audio.play().catch((err) => {
         diag.failures++
         diag.lastError = String((err as Error)?.name ?? 'play-rejected')
-        finish()
+        finish(false)
       })
     })
 
@@ -786,51 +792,95 @@ export function createSpeaker(): Speaker {
   }
 }
 
-/** Whether any cloud voice can actually answer: the bridge holds a key, or
- *  one was baked into the bundle for direct mode. */
-const cloudVoiceAvailable = () => caps().tts || Boolean(env.elevenKey)
+/**
+ * The browser only ever calls ElevenLabs itself in direct mode. In bridge
+ * mode the bridge holds the key (ELEVENLABS_API_KEY in .env) and a VITE_ key
+ * is ignored — anything VITE_ is compiled into the page for anyone to read.
+ */
+const directKey = () => (BACKEND === 'direct' ? env.elevenKey : '')
 
-/** Only used when USE_ELEVENLABS is on. Bridge proxy first (it already holds
- *  the key), then a direct key, then null to fall back to the native voice. */
+/** Whether any cloud voice can actually answer. */
+const cloudVoiceAvailable = () => caps().tts || Boolean(directKey())
+
+/**
+ * The cloud voice stands down after failing. A wrong key, an exhausted quota
+ * or no network used to be retried on every sentence, each one waiting for
+ * its failure before the system voice could start. Three misses in a row, or
+ * one refusal from the bridge (503: no key, or ElevenLabs said no), and the
+ * system voice speaks alone for a minute before the cloud is tried again.
+ */
+const CLOUD_TIMEOUT_MS = 15_000
+const CLOUD_REST_MS = 60_000
+let cloudMisses = 0
+let cloudRestUntil = 0
+const cloudResting = () => Date.now() < cloudRestUntil
+
+function cloudMissed(refused = false) {
+  cloudMisses++
+  if (refused || cloudMisses >= 3) {
+    cloudMisses = 0
+    cloudRestUntil = Date.now() + CLOUD_REST_MS
+    console.warn('[jarvis] ElevenLabs sesi kullanılamıyor — bir dakika sistem sesi kullanılacak')
+  }
+}
+
+/** Bridge proxy first (it holds the key), then a direct key in direct mode,
+ *  then null — which the caller answers with the system voice. Never throws. */
 async function fetchCloudAudio(text: string): Promise<string | null> {
+  if (cloudResting()) return null
+
   if (BACKEND === 'bridge') {
     try {
       const res = await fetch(`${BRIDGE_HTTP_URL}/tts`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ text }),
+        signal: AbortSignal.timeout(CLOUD_TIMEOUT_MS),
       })
-      if (res.ok) return URL.createObjectURL(await res.blob())
+      if (res.ok) {
+        const url = URL.createObjectURL(await res.blob())
+        cloudMisses = 0
+        return url
+      }
+      cloudMissed(res.status === 503)
     } catch {
-      /* fall through */
+      cloudMissed()
     }
+    return null
   }
 
-  if (env.elevenKey) {
+  const key = directKey()
+  if (key) {
     try {
       const res = await fetch(
         `https://api.elevenlabs.io/v1/text-to-speech/${env.elevenVoiceId}/stream` +
-          `?output_format=mp3_22050_32&optimize_streaming_latency=3`,
+          `?output_format=mp3_22050_32`,
         {
           method: 'POST',
           headers: {
-            'xi-api-key': env.elevenKey,
+            'xi-api-key': key,
             'content-type': 'application/json',
           },
           body: JSON.stringify({
             text,
             model_id: 'eleven_flash_v2_5',
+            language_code: 'tr',
             voice_settings: {
-              stability: 0.4,
+              stability: 0.45,
               similarity_boost: 0.75,
-              speed: 1.05,
+              speed: 1.0,
             },
           }),
+          signal: AbortSignal.timeout(CLOUD_TIMEOUT_MS),
         },
       )
-      if (res.ok) return URL.createObjectURL(await res.blob())
+      if (res.ok) {
+        cloudMisses = 0
+        return URL.createObjectURL(await res.blob())
+      }
+      cloudMissed(res.status === 401 || res.status === 403)
     } catch {
-      /* fall through */
+      cloudMissed()
     }
   }
 

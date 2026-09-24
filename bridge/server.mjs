@@ -15,6 +15,8 @@
  *   node bridge/server.mjs
  */
 
+// First, so every module below sees the .env values when it loads.
+import { loadedEnvFiles } from './env.mjs'
 import { WebSocketServer } from 'ws'
 import { query } from '@anthropic-ai/claude-agent-sdk'
 import { displayServer } from './panels.mjs'
@@ -35,6 +37,7 @@ import {
   transcribeLocal,
   warmLocalStt,
 } from './stt.mjs'
+import { MODEL as TTS_MODEL, VOICE_ID, synthesize, ttsBlocked } from './tts.mjs'
 
 const PORT = Number(process.env.JARVIS_BRIDGE_PORT ?? 8787)
 
@@ -482,7 +485,19 @@ function elevenKey() {
   }
 }
 
-const VOICE_ID = process.env.JARVIS_VOICE_ID ?? 'JBFqnCBsd6RMkjVDRZzb'
+/**
+ * Who transcribes. Local Whisper whenever it is installed — it is free, keeps
+ * the audio on the machine, and is what the Turkish pipeline was tuned and
+ * verified against. An ElevenLabs key buys the voice (tts.mjs); Scribe is
+ * used for the words only when asked for with JARVIS_STT_ENGINE=elevenlabs,
+ * or when there is no local recogniser at all.
+ */
+function sttEngine() {
+  const key = elevenKey()
+  if (key && process.env.JARVIS_STT_ENGINE === 'elevenlabs') return 'elevenlabs'
+  if (localSttAvailable()) return 'local'
+  return key ? 'elevenlabs' : null
+}
 
 /**
  * Where /file is permitted to read from, and how big a read may get.
@@ -711,15 +726,18 @@ const handleRequest = async (req, res) => {
     // Without a key, words are transcribed locally by Whisper (see stt.mjs)
     // rather than by the browser's recogniser, which cannot work inside
     // Electron at all. `sttEngine` tells the browser which format to post.
-    const eleven = Boolean(elevenKey())
-    const local = !eleven && localSttAvailable()
+    //
+    // `tts` goes false once ElevenLabs has refused the key, so the browser
+    // stops asking and speaks with the system voice.
+    const engine = sttEngine()
+    const local = engine === 'local'
     res.writeHead(200, { ...cors, 'content-type': 'application/json' })
     return res.end(
       JSON.stringify({
         ok: true,
-        tts: eleven,
-        stt: eleven || local,
-        sttEngine: eleven ? 'elevenlabs' : local ? 'local' : null,
+        tts: Boolean(elevenKey()) && !ttsBlocked(),
+        stt: engine !== null,
+        sttEngine: engine,
         // Where the local model is: idle | downloading | extracting | loading
         // | ready | error, with a percentage while it downloads.
         sttStatus: local ? localSttStatus() : null,
@@ -881,47 +899,32 @@ const handleRequest = async (req, res) => {
       res.writeHead(400, cors)
       return res.end('no text')
     }
+    // Anything that goes wrong here is answered with a status, never thrown:
+    // the browser treats any non-200 as "use the system voice for this one",
+    // so a bad key or a dead network costs a sentence's latency, not the turn.
+    let upstream
     try {
-      const upstream = await fetch(
-        `https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}/stream` +
-          // 22kHz mono is half the bytes of 44kHz and indistinguishable through
-          // a laptop speaker; optimize_streaming_latency=3 trades a little
-          // prosody for a much earlier first byte.
-          `?output_format=mp3_22050_32&optimize_streaming_latency=3`,
-        {
-          method: 'POST',
-          headers: { 'xi-api-key': key, 'content-type': 'application/json' },
-          body: JSON.stringify({
-            text,
-            // Flash is the low-latency model — a conversation needs speed more
-            // than it needs the last few percent of quality.
-            model_id: 'eleven_flash_v2_5',
-            voice_settings: {
-              stability: 0.4,
-              similarity_boost: 0.75,
-              speed: 1.05,
-            },
-          }),
-        },
-      )
-      if (!upstream.ok) {
-        res.writeHead(upstream.status, cors)
-        return res.end(await upstream.text())
-      }
-
-      // Pipe it through rather than buffering. Waiting for the whole file here
-      // would throw away everything the streaming endpoint just bought us.
-      res.writeHead(200, {
-        ...cors,
-        'content-type': 'audio/mpeg',
-        'cache-control': 'no-cache',
-      })
-      for await (const chunk of upstream.body) res.write(Buffer.from(chunk))
-      return res.end()
+      upstream = await synthesize(key, String(text).slice(0, 5000))
     } catch (err) {
-      res.writeHead(502, cors)
-      return res.end(String(err?.message ?? err))
+      res.writeHead(err?.status ?? 502, { ...cors, 'content-type': 'application/json' })
+      return res.end(JSON.stringify({ error: String(err?.message ?? err) }))
     }
+
+    // Pipe it through rather than buffering. Waiting for the whole file here
+    // would throw away everything the streaming endpoint just bought us.
+    res.writeHead(200, {
+      ...cors,
+      'content-type': upstream.headers.get('content-type') || 'audio/mpeg',
+      'cache-control': 'no-cache',
+    })
+    try {
+      for await (const chunk of upstream.body) res.write(Buffer.from(chunk))
+    } catch (err) {
+      // Headers are gone already; all that is left is to end the stream. The
+      // browser sees a truncated clip and moves on.
+      console.warn(`[jarvis] ElevenLabs akışı yarıda kesildi: ${err?.message ?? err}`)
+    }
+    return res.end()
   }
 
   // Speech to text. The browser captures one spoken segment as a compressed
@@ -932,11 +935,12 @@ const handleRequest = async (req, res) => {
   // speaking at all is done locally with voice-activity detection, which never
   // touches this endpoint; this is only for the words.
   if (req.method === 'POST' && req.url === '/stt') {
-    const key = elevenKey()
-    if (!key && !localSttAvailable()) {
+    const engine = sttEngine()
+    if (!engine) {
       res.writeHead(503, cors)
       return res.end('no speech recogniser: no elevenlabs key and no local model')
     }
+    const key = engine === 'elevenlabs' ? elevenKey() : null
 
     const type = req.headers['content-type'] || 'audio/webm'
     const chunks = []
@@ -964,9 +968,9 @@ const handleRequest = async (req, res) => {
       return res.end(JSON.stringify({ text: '' }))
     }
 
-    // No key: Whisper, locally. The browser has already decoded the segment to
-    // 16 kHz mono WAV, because nothing on this side can decode Opus.
-    if (!key) {
+    // Whisper, locally. The browser has already decoded the segment to 16 kHz
+    // mono WAV, because nothing on this side can decode Opus.
+    if (engine === 'local') {
       try {
         const { samples, sampleRate } = parseWav(Buffer.concat(chunks))
         const text = await transcribeLocal(samples, sampleRate)
@@ -1076,17 +1080,25 @@ server.on('error', (err) => {
 server.listen(PORT)
 
 console.log(`[jarvis] bridge dinliyor: ws://localhost:${PORT}`)
+if (loadedEnvFiles.length) console.log(`[jarvis] ayarlar okundu: ${loadedEnvFiles.join(', ')}`)
 console.log(
-  `[jarvis] konuşma sesi: ${elevenKey() ? 'ElevenLabs (anahtar MCP ayarlarından)' : 'sistemin kendi sesi'}`,
+  `[jarvis] konuşma sesi: ${
+    elevenKey()
+      ? `ElevenLabs (${TTS_MODEL}, ses ${VOICE_ID}; başarısız olursa sistem sesi)`
+      : 'sistemin kendi sesi (ELEVENLABS_API_KEY yok)'
+  }`,
 )
 console.log(`[jarvis] model ${MODEL} · çaba ${EFFORT}`)
-if (!elevenKey()) {
+{
+  const engine = sttEngine()
   console.log(
-    localSttAvailable()
-      ? '[jarvis] konuşma tanıma: yerel Whisper (ElevenLabs anahtarı yok)'
-      : '[jarvis] konuşma tanıma yok — "npm install" çalıştırın (sherpa-onnx-node)',
+    engine === 'local'
+      ? '[jarvis] konuşma tanıma: yerel Whisper'
+      : engine === 'elevenlabs'
+        ? '[jarvis] konuşma tanıma: ElevenLabs Scribe'
+        : '[jarvis] konuşma tanıma yok — "npm install" çalıştırın (sherpa-onnx-node)',
   )
-  warmLocalStt()
+  if (engine === 'local') warmLocalStt()
 }
 console.log(
   `[jarvis] yazma işlemleri ${ALLOW_WRITES ? 'AÇIK' : 'kapalı'}` +

@@ -131,8 +131,10 @@ export const KOKORO_VOICE = choice(
 export const env = {
   anthropicKey: str(import.meta.env.VITE_ANTHROPIC_API_KEY) ?? '',
   elevenKey: str(import.meta.env.VITE_ELEVENLABS_API_KEY) ?? '',
+  // Direct mode only; the bridge has its own (ELEVENLABS_VOICE_ID). Default is
+  // "Sarah", a premade female voice, spoken in Turkish by the Flash model.
   elevenVoiceId:
-    str(import.meta.env.VITE_ELEVENLABS_VOICE_ID) ?? 'JBFqnCBsd6RMkjVDRZzb',
+    str(import.meta.env.VITE_ELEVENLABS_VOICE_ID) ?? 'EXAVITQu4vr4xnSDxMaL',
   porcupineKey: str(import.meta.env.VITE_PICOVOICE_ACCESS_KEY) ?? '',
 }
 

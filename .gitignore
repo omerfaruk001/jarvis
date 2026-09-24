@@ -12,6 +12,12 @@ dist
 dist-ssr
 *.local
 
+# Secrets. The bridge reads ELEVENLABS_API_KEY and friends from here, so a
+# committed .env is a leaked key. .env.example is the template to copy.
+.env
+.env.*
+!.env.example
+
 # electron-builder output (installers and unpacked app)
 release
 
