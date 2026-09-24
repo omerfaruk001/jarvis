@@ -49,6 +49,22 @@ export function parseEnv(text) {
   return out
 }
 
+/**
+ * Windows PowerShell 5 writes `echo KEY=value > .env` as UTF-16 with a byte
+ * order mark, which read as UTF-8 is a string of NULs and no variables at
+ * all. Honour the BOM so the file works however it was made.
+ */
+function readText(file) {
+  const buf = readFileSync(file)
+  if (buf[0] === 0xff && buf[1] === 0xfe) return buf.subarray(2).toString('utf16le')
+  if (buf[0] === 0xfe && buf[1] === 0xff) {
+    const le = Buffer.from(buf.subarray(2))
+    le.swap16()
+    return le.toString('utf16le')
+  }
+  return buf.toString('utf8')
+}
+
 /** Which files were read — names only, for the startup banner. Values are
  *  never logged. */
 export const loadedEnvFiles = []
@@ -56,7 +72,7 @@ export const loadedEnvFiles = []
 for (const file of FILES) {
   if (!existsSync(file)) continue
   try {
-    for (const [k, v] of Object.entries(parseEnv(readFileSync(file, 'utf8')))) {
+    for (const [k, v] of Object.entries(parseEnv(readText(file)))) {
       if (process.env[k] === undefined && v !== '') process.env[k] = v
     }
     loadedEnvFiles.push(file)
