@@ -760,7 +760,7 @@ function startBrowserVoice(h: VoiceHandlers): Voice {
     rec = new Ctor()
     rec.continuous = true
     rec.interimResults = true
-    rec.lang = 'en-GB'
+    rec.lang = 'tr-TR'
     rec.onstart = () => {
       running = true
       diag.running = true

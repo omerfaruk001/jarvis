@@ -31,6 +31,17 @@ import { probeUrl, renderPage } from './page.mjs'
 const PORT = Number(process.env.JARVIS_BRIDGE_PORT ?? 8787)
 
 /**
+ * Where the native Claude Code binary lives, when someone above us already
+ * knows. The SDK spawns that binary for every turn and normally finds it by
+ * resolving its platform package out of node_modules; that works when we run
+ * from a source checkout but is fragile once the app is packaged, where the
+ * optional dependency is easy to drop. The desktop wrapper sets this to the
+ * copy it bundled, so packaged turns don't depend on the SDK's own search
+ * succeeding. Unset in the plain `npm run bridge` path, where resolution works.
+ */
+const CLAUDE_CODE_PATH = process.env.JARVIS_CLAUDE_CODE_PATH || null
+
+/**
  * A crash here takes the whole assistant down mid-sentence, and most of what
  * can reject is out of our hands — a socket dying under a write, an upstream
  * fetch aborting. Log it and keep serving; the turn that failed will surface
@@ -1246,6 +1257,10 @@ wss.on('connection', (socket) => {
       // without this line nothing in the project has a say at all.
       model: MODEL,
       effort: EFFORT,
+      // Skip the SDK's own resolution when the wrapper has already handed us the
+      // native binary's path — see CLAUDE_CODE_PATH. Omitted (undefined) in dev,
+      // which leaves the SDK to find it exactly as before.
+      ...(CLAUDE_CODE_PATH ? { pathToClaudeCodeExecutable: CLAUDE_CODE_PATH } : {}),
       maxTurns: 24,
       permissionMode: 'default',
       // Without this the SDK only emits whole assistant messages, and JARVIS
